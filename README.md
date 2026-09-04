@@ -4,44 +4,54 @@
 
 C++ SDK for building [Emergence](https://github.com/EmergenceSystem) network agents.
 
-`em_filter_cpp` lets any C++ process join the Emergence distributed discovery network
-as a **filter agent** — a service that receives search queries from the `em_disco`
-broker, processes them (web search, DNS lookup, LLM call, database query, …), and
-returns structured results.
+`em_filter_cpp` lets any C++ process join the Emergence distributed discovery
+network as a **filter agent** -- a service that receives search queries from
+the mesh, processes them (web search, DNS lookup, LLM call, database query,
+...), and returns ed25519-signed structured results.
 
-This library is the C++ equivalent of the Erlang `em_filter` library: same WebSocket
-protocol, same configuration contract, idiomatic modern C++ API.
+This is byte-identical, protocol-level parity with the Erlang reference
+(`em_pop_crypto.erl`): same keypair format, same canonical byte forms, same
+signatures. See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol.
 
 ---
 
-## How it works
+## Two transports, one identity
+
+- **Model B -- WS relay (default, NAT-friendly).** The agent opens an
+  outbound WebSocket to a disco and never needs an inbound port. Good default
+  for a laptop or a box behind a home router.
+- **Model A -- direct HTTP.** The agent serves `POST /agent/query`,
+  `POST /pop/gossip`, `GET /health` and gossips its own identity to seed
+  discos. Requires the agent to be reachable at `host:query_port`.
+
+Select with `EM_FILTER_MODE=relay|direct|both` (default `relay`). `both` runs
+concurrently under the same ed25519 identity.
 
 ```
- ┌─────────────┐    WebSocket     ┌───────────────┐    WebSocket     ┌─────────────┐
- │  em_disco   │ ◄─────────────── │ FilterRunner  │ ───────────────► │  em_disco   │
- │  (broker)   │  query / result  │ (your agent)  │  (multi-node)    │  (replica)  │
- └─────────────┘                  └───────────────┘                  └─────────────┘
-                                         │
-                               std::thread per node
-                                         │
-                                  ┌──────┴──────┐
-                                  │  em::Filter │
-                                  │  subclass   │
-                                  └─────────────┘
+                  Model B (default)                      Model A
+ ┌─────────┐   outbound WS, hello/query/result    ┌─────────┐   inbound POST /agent/query
+ │ FilterRunner│ ───────────────────────────────► │ FilterRunner│ ◄─────────────────────── em_disco
+ │ (your agent)│      NAT-friendly, no open port    │ (your agent)│   + gossip push to /pop/gossip
+ └─────────┘                                       └─────────┘
+      │                                                   │
+      └──────────────────── em::Filter subclass ──────────┘
 ```
 
-1. `FilterRunner` resolves disco nodes and spawns one `std::thread` per node.
-2. Each thread maintains a persistent WebSocket connection with automatic reconnection.
-3. On a `query` frame, the thread calls your `Filter::handle()` and sends back a `result` frame.
+1. `FilterRunner` loads/creates the agent's ed25519 keypair (`Identity`) and
+   starts the transport thread(s) selected by `EM_FILTER_MODE`.
+2. Every query result is signed: `signature = Ed25519(canonical_response(results), seed)`.
+3. Your code only implements `Filter::handle`.
 
 ---
 
 ## Requirements
 
 - C++17 compiler (GCC 9+, Clang 10+, MSVC 2019+)
-- CMake 3.20+
-- OpenSSL (install via system package manager or [vcpkg](https://vcpkg.io/))
-- [nlohmann/json](https://github.com/nlohmann/json) — downloaded automatically via CMake `FetchContent`
+- CMake 3.16+
+- OpenSSL, libsodium (`pkg-config libsodium`)
+- [nlohmann/json](https://github.com/nlohmann/json) and
+  [cpp-httplib](https://github.com/yhirose/cpp-httplib) -- downloaded
+  automatically via CMake `FetchContent`
 
 ---
 
@@ -49,14 +59,9 @@ protocol, same configuration contract, idiomatic modern C++ API.
 
 ```bash
 mkdir build && cd build
-
-# Linux / macOS
 cmake ..
 cmake --build . --config Release
-
-# Windows with vcpkg
-cmake .. -DOPENSSL_ROOT_DIR=C:/vcpkg/installed/x64-windows
-cmake --build . --config Release
+ctest --test-dir .
 ```
 
 To use the library in your own CMake project:
@@ -100,21 +105,20 @@ int main() {
 }
 ```
 
-By default the agent connects to `localhost:8080`. Override via environment
-variables or `em::AgentConfig` — see [Configuration](#configuration).
+By default the agent relays through `localhost:8080` (Model B). Point it at a
+real disco and see [Configuration](#configuration).
 
 ---
 
 ## Try the built-in example
 
 ```bash
-./build/Release/echo_filter
+# Model B (default): outbound WS relay
+EM_DISCO_HOST=disco.example.com ./build/echo_filter
 
-# With a custom broker:
-EM_DISCO_HOST=disco.example.com \
-EM_DISCO_PORT=443 \
-EM_FILTER_JWT_TOKEN=eyJ... \
-./build/Release/echo_filter
+# Model A: direct HTTP, must be reachable at query_port
+EM_FILTER_MODE=direct EM_FILTER_QUERY_PORT=9600 \
+EM_DISCO_HOST=disco.example.com ./build/echo_filter
 ```
 
 ---
@@ -134,13 +138,14 @@ public:
 }
 ```
 
-`handle` is called for every `query` frame from `em_disco`.
-- `body` — raw query string (e.g. `"erlang otp"`)
-- `memory` — current memory state (JSON object, passed by reference; persists between
-  queries within a connection; reset to `{}` on reconnect — same as Erlang RAM mode)
+`handle` is called for every query, on either transport.
+- `body` -- raw query string (e.g. `"erlang otp"`)
+- `memory` -- current memory state (JSON object, passed by reference;
+  persists between queries within a session; reset to `{}` on reconnect)
 
-Modify `memory` in-place or replace it entirely. The return value is the result JSON —
-typically an array of embryo objects.
+Modify `memory` in-place or replace it entirely. The return value is the
+result JSON -- typically an array of embryo objects, signed automatically
+before being sent.
 
 ### Result format
 
@@ -154,8 +159,9 @@ Return `nlohmann::json{}` (null) or an empty array for "no results".
 
 ### Capabilities
 
-`capabilities()` returns the list of capabilities your agent advertises.
-`em_disco` uses these to route queries. Default: `{"search", "query"}`.
+`capabilities()` returns the list of plain-string capabilities your agent
+advertises. The disco computes the routing vector from these (never the SDK
+itself -- see PROTOCOL.md). Default: `{"search", "query"}`.
 
 ---
 
@@ -164,26 +170,31 @@ Return `nlohmann::json{}` (null) or an empty array for "no results".
 ### Environment variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `EM_DISCO_HOST` | — | Disco broker hostname |
-| `EM_DISCO_PORT` | — | Disco broker port |
-| `EM_FILTER_JWT_TOKEN` | — | JWT for authenticated brokers |
-| `EM_FILTER_RECONNECT_MS` | `5000` | Reconnect delay in milliseconds |
+|----------|---------|--------------|
+| `EM_FILTER_MODE` | `relay` | `relay` \| `direct` \| `both` |
+| `EM_DISCO_HOST` | -- | Disco hostname (relay target / gossip seed) |
+| `EM_DISCO_PORT` | -- | Disco port |
+| `EM_FILTER_KEY_DIR` | `./empop_key_<name>/` | ed25519 keypair directory |
+| `EM_FILTER_QUERY_PORT` | `9600` | Model A listen/advertise port |
+| `EM_FILTER_HOST` | `0.0.0.0` | Model A bind/advertise host |
+| `EM_FILTER_GOSSIP_INTERVAL_MS` | `5000` | Model A gossip push interval |
+| `EM_FILTER_RECONNECT_MS` | `5000` | Model B reconnect delay |
+| `EM_FILTER_JWT_TOKEN` | -- | Shared `auth_token`, if the mesh requires one |
 
 ### Node resolution order
 
-1. `AgentConfig.disco_nodes` — explicit list (highest priority)
+1. `AgentConfig.disco_nodes` -- explicit list (highest priority)
 2. `EM_DISCO_HOST` / `EM_DISCO_PORT` env vars
-3. `[em_disco] nodes = …` in `emergence.conf`
-4. `localhost:8080` — built-in default
+3. `[em_disco] nodes = ...` in `emergence.conf`
+4. `localhost:8080` -- built-in default
 
 ### TLS inference
 
 | Host | Port | Transport |
 |------|------|-----------|
-| `localhost`, `127.0.0.1`, `::1` | any | `ws://` (plain) |
-| any other | 443 | `wss://` (TLS) |
-| any other | other | `ws://` (plain) |
+| `localhost`, `127.0.0.1`, `::1` | any | plain |
+| any other | 443 | TLS |
+| any other | other | plain |
 
 ### `emergence.conf`
 
@@ -213,26 +224,29 @@ em::FilterRunner("my_filter", std::make_shared<MyFilter>(), config).run();
 
 ---
 
-## Multi-node
+## Multi-node (relay / both)
 
-`FilterRunner` connects to all resolved nodes simultaneously, one `std::thread` per node.
-The filter is shared via `std::shared_ptr` — all threads call the same object, so ensure
-`handle()` is thread-safe (or use a mutex around shared state). Memory (the `nlohmann::json&`
-reference) is local to each thread — starts as `{}` and resets on reconnect.
+In `relay` or `both` mode, `FilterRunner` opens one `RelayClient` thread per
+resolved disco node -- redundant relay connections under the same identity.
+The filter is shared via `std::shared_ptr`; all threads call the same
+object, so keep `handle()` thread-safe (a mutex around shared state, or none
+if it's read-only/stateless). Each session's `memory` (the `nlohmann::json&`
+reference) is local to that WS session -- starts as `{}` and resets on
+reconnect.
 
 ---
 
 ## HTML utilities
 
-`#include "em_filter/html.hpp"` — namespace `em`:
+`#include "em_filter/html.hpp"` -- namespace `em`:
 
 ```cpp
 #include "em_filter/html.hpp"
 
 std::string html  = fetch_page(url);
-std::string clean = em::strip_scripts(html);          // remove <script>…</script>
-std::string text  = em::get_text(clean);              // strip all tags → plain text
-std::string dec   = em::decode_html_entities(text);   // caf&eacute; → café
+std::string clean = em::strip_scripts(html);          // remove <script>...</script>
+std::string text  = em::get_text(clean);              // strip all tags -> plain text
+std::string dec   = em::decode_html_entities(text);   // caf&eacute; -> café
 
 auto items = em::extract_elements(html, "li.b_algo");
 for (auto& item : items) {
@@ -254,24 +268,10 @@ for (auto& item : items) {
 
 ---
 
-## WebSocket protocol
+## Protocol
 
-The agent speaks a minimal JSON-over-WebSocket protocol to `em_disco`.
-
-**Agent → Disco:**
-```json
-{ "action": "register",    "name": "<agent_name>" }
-{ "action": "agent_hello", "capabilities": ["search", "query"] }
-{ "action": "result",      "id": "<query_id>", "data": <result> }
-```
-
-**Disco → Agent:**
-```json
-{ "action": "query", "id": "<query_id>", "body": "<query_string>" }
-```
-
-The library handles the handshake and reconnection automatically.
-Your code only implements `Filter::handle`.
+See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol: identity/crypto,
+Model A HTTP routes, Model B WS frames.
 
 ---
 

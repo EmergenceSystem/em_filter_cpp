@@ -1,13 +1,18 @@
 /**
- * echo_filter -- exemple minimal d'un agent em_filter C++.
+ * echo_filter -- minimal em_filter_cpp example agent.
  *
  * Build:
  *   cmake -B build && cmake --build build
  *   ./build/echo_filter
  *
- * Avec un broker distant:
- *   EM_DISCO_HOST=disco.example.com EM_DISCO_PORT=443 \
- *   EM_FILTER_JWT_TOKEN=eyJ... ./build/echo_filter
+ * Runs in Model B (WS relay, default) against a local disco:
+ *   EM_DISCO_HOST=disco.example.com ./build/echo_filter
+ *
+ * Runs in Model A (direct HTTP), reachable from the mesh at query_port:
+ *   EM_FILTER_MODE=direct EM_FILTER_QUERY_PORT=9600 \
+ *   EM_DISCO_HOST=disco.example.com ./build/echo_filter
+ *
+ * See EM_FILTER_MODE=both to run both transports concurrently.
  */
 #include <em_filter/filter.hpp>
 #include <em_filter/runner.hpp>
