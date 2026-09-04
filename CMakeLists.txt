@@ -41,6 +41,7 @@ add_library(em_filter_cpp STATIC
     src/identity.cpp
     src/connection.cpp
     src/server.cpp
+    src/wsclient.cpp
     src/runner.cpp
 )
 
@@ -84,6 +85,7 @@ if(EM_FILTER_CPP_BUILD_TESTS)
         tests/test_crypto_vectors.cpp
         tests/test_identity.cpp
         tests/test_server.cpp
+        tests/test_wsclient.cpp
     )
     target_include_directories(em_filter_cpp_tests PRIVATE src)
     target_link_libraries(em_filter_cpp_tests PRIVATE
