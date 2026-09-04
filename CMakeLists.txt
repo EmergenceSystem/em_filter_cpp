@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(sodium REQUIRED IMPORTED_TARGET libsodium)
+
 # nlohmann/json — header-only, fetched via git at configure time
 include(FetchContent)
 FetchContent_Declare(
@@ -21,6 +24,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 add_library(em_filter_cpp STATIC
     src/config.cpp
     src/websocket.cpp
+    src/crypto.cpp
     src/connection.cpp
     src/runner.cpp
 )
@@ -35,7 +39,45 @@ target_link_libraries(em_filter_cpp PUBLIC
     OpenSSL::Crypto
     Threads::Threads
     nlohmann_json::nlohmann_json
+    PkgConfig::sodium
 )
+
+if(WIN32)
+    target_link_libraries(em_filter_cpp PUBLIC ws2_32)
+endif()
 
 add_executable(echo_filter examples/echo_filter.cpp)
 target_link_libraries(echo_filter PRIVATE em_filter_cpp)
+
+# --- Tests -----------------------------------------------------------------
+
+option(EM_FILTER_CPP_BUILD_TESTS "Build em_filter_cpp tests" ON)
+
+if(EM_FILTER_CPP_BUILD_TESTS)
+    enable_testing()
+
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.6.0
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(Catch2)
+
+    add_executable(em_filter_cpp_tests
+        tests/test_crypto_vectors.cpp
+    )
+    target_include_directories(em_filter_cpp_tests PRIVATE src)
+    target_link_libraries(em_filter_cpp_tests PRIVATE
+        em_filter_cpp
+        Catch2::Catch2WithMain
+    )
+    target_compile_definitions(em_filter_cpp_tests PRIVATE
+        FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crypto_vectors.json"
+    )
+
+    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    include(CTest)
+    include(Catch)
+    catch_discover_tests(em_filter_cpp_tests)
+endif()
