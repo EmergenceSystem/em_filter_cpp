@@ -25,6 +25,7 @@ add_library(em_filter_cpp STATIC
     src/config.cpp
     src/websocket.cpp
     src/crypto.cpp
+    src/identity.cpp
     src/connection.cpp
     src/runner.cpp
 )
@@ -66,6 +67,7 @@ if(EM_FILTER_CPP_BUILD_TESTS)
 
     add_executable(em_filter_cpp_tests
         tests/test_crypto_vectors.cpp
+        tests/test_identity.cpp
     )
     target_include_directories(em_filter_cpp_tests PRIVATE src)
     target_link_libraries(em_filter_cpp_tests PRIVATE
