@@ -139,4 +139,40 @@ std::optional<std::string> resolve_jwt(const AgentConfig& cfg) {
     return std::nullopt;
 }
 
+std::string resolve_key_dir(const std::string& name) {
+    const char* env = std::getenv("EM_FILTER_KEY_DIR");
+    if (env && *env) return env;
+    return "./empop_key_" + name + "/";
+}
+
+std::string filter_mode() {
+    const char* env = std::getenv("EM_FILTER_MODE");
+    if (env && *env) return env;
+    return "relay";
+}
+
+int query_port() {
+    const char* env = std::getenv("EM_FILTER_QUERY_PORT");
+    if (env) {
+        int v = std::atoi(env);
+        if (v > 0) return v;
+    }
+    return 9600;
+}
+
+std::string advertise_host() {
+    const char* env = std::getenv("EM_FILTER_HOST");
+    if (env && *env) return env;
+    return "0.0.0.0";
+}
+
+int gossip_interval_ms() {
+    const char* env = std::getenv("EM_FILTER_GOSSIP_INTERVAL_MS");
+    if (env) {
+        int v = std::atoi(env);
+        if (v > 0) return v;
+    }
+    return 5000;
+}
+
 } // namespace em::internal

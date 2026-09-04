@@ -7,7 +7,14 @@
 namespace em {
 
 /**
- * Starts one std::thread per resolved disco node and runs forever.
+ * Starts the transport(s) selected by `EM_FILTER_MODE` (relay | direct | both,
+ * default relay) and runs forever:
+ *   - relay:  one outbound WS RelayClient thread per resolved disco node,
+ *             hello/query/result over `/ws/filter` (NAT-friendly, default).
+ *   - direct: one AgentServer thread serving `/agent/query` + `/pop/gossip`
+ *             + `/health`, plus a gossip-push thread that POSTs the agent's
+ *             self-payload to each resolved seed disco.
+ *   - both:   direct + relay concurrently, same identity.
  *
  * Usage:
  * @code
@@ -22,7 +29,7 @@ public:
                  std::shared_ptr<Filter> filter,
                  AgentConfig config = {});
 
-    /** Start all connection threads and block until they all exit. */
+    /** Start all configured transport threads and block until they all exit. */
     void run();
 
 private:

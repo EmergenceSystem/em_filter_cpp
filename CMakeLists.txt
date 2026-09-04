@@ -39,7 +39,6 @@ add_library(em_filter_cpp STATIC
     src/websocket.cpp
     src/crypto.cpp
     src/identity.cpp
-    src/connection.cpp
     src/server.cpp
     src/wsclient.cpp
     src/runner.cpp

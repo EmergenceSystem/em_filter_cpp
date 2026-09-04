@@ -10,3 +10,6 @@ cmake_install.cmake
 CTestTestfile.cmake
 *.vcxproj.user
 .vs/
+
+# per-run ed25519 keypair storage (default EM_FILTER_KEY_DIR)
+empop_key_*/
