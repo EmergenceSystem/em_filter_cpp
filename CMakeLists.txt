@@ -21,12 +21,26 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 # This provides the nlohmann_json::nlohmann_json target with correct include paths.
 
+# cpp-httplib — header-only HTTP server/client, used for the Model A
+# (direct) transport: /agent/query, /pop/gossip, /health, and the gossip
+# push loop's outbound POSTs.
+set(HTTPLIB_REQUIRE_OPENSSL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG        v0.54.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(httplib)
+# This provides the httplib::httplib target with CPPHTTPLIB_OPENSSL_SUPPORT wired in.
+
 add_library(em_filter_cpp STATIC
     src/config.cpp
     src/websocket.cpp
     src/crypto.cpp
     src/identity.cpp
     src/connection.cpp
+    src/server.cpp
     src/runner.cpp
 )
 
@@ -40,6 +54,7 @@ target_link_libraries(em_filter_cpp PUBLIC
     OpenSSL::Crypto
     Threads::Threads
     nlohmann_json::nlohmann_json
+    httplib::httplib
     PkgConfig::sodium
 )
 
@@ -68,6 +83,7 @@ if(EM_FILTER_CPP_BUILD_TESTS)
     add_executable(em_filter_cpp_tests
         tests/test_crypto_vectors.cpp
         tests/test_identity.cpp
+        tests/test_server.cpp
     )
     target_include_directories(em_filter_cpp_tests PRIVATE src)
     target_link_libraries(em_filter_cpp_tests PRIVATE
