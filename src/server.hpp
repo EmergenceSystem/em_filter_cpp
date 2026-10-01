@@ -14,7 +14,8 @@ namespace em::internal {
 
 /**
  * Model A: serves inbound HTTP.
- *   POST /agent/query  -- {"query": "..."} -> {results, signer_id, signature}
+ *   POST /agent/query  -- {"query": "..."} -> {results, ts, signer_id, signature}
+ *                        (signature = v2 over canonical_response_v2(query, ts, results))
  *   POST /pop/gossip   -- accept a remote gossip payload, reply own self-payload
  *   GET  /health       -- "ok"
  */
@@ -54,7 +55,8 @@ private:
 
 /**
  * Model A: push identity.gossip_payload() to each seed's /pop/gossip every
- * interval_ms, forever. Intended to run on its own thread.
+ * interval_ms, forever. Intended to run on its own thread. Each POST carries the
+ * x-pop-id / x-pop-ts / x-pop-sig auth headers (sign_gossip over the exact body).
  */
 void gossip_push_loop(Identity& identity,
                        const std::vector<DiscoNode>& seeds,

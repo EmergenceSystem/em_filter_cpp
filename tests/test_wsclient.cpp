@@ -78,7 +78,14 @@ TEST_CASE("RelayClient: hello/hello_ok handshake then query/result round-trip", 
     auto signer_id = em::crypto::b64_decode(result["signer_id"].get<std::string>());
     CHECK(signer_id == ident.id());
     auto sig = em::crypto::b64_decode(result["signature"].get<std::string>());
-    CHECK(em::crypto::verify(em::crypto::canonical_response(result["results"]), sig, ident.pubkey()));
+    REQUIRE(result["ts"].is_number_integer());
+    const std::int64_t ts = result["ts"].get<std::int64_t>();
+    CHECK(ts > 1700000000000LL);
+    // v2: signed over the relayed query body ("hi") + ts.
+    CHECK(em::crypto::verify(em::crypto::canonical_response_v2("hi", ts, result["results"]), sig,
+                             ident.pubkey()));
+    CHECK_FALSE(em::crypto::verify(em::crypto::canonical_response(result["results"]), sig,
+                                   ident.pubkey()));
     CHECK(result["results"][0]["title"] == "T: hi");
 
     stub.close();

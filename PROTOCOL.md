@@ -35,14 +35,17 @@ against a shared fixture (`fixtures/crypto_vectors.json`).
 ## Model A -- direct (the filter serves inbound HTTP)
 
 - `POST /agent/query` -- body `{"query": "..."}`.
-  Runs the handler, replies `200 {"results": [...], "signer_id": "<b64>", "signature": "<b64>"}`.
+  Runs the handler, replies `200 {"results": [...], "ts": <unix ms>, "signer_id": "<b64>", "signature": "<b64>"}`
+  with `signature` the v2 form over `canonical_response_v2(query, ts, results)`.
   Malformed/missing `query` -> `400`. Handler exception -> `500`.
 - `GET /health` -- `200 "ok"`.
 - `POST /pop/gossip` -- accepts a remote gossip payload (not parsed further;
   the SDK does not keep a peer table), replies `200` with the agent's own
   self-payload (same shape as the gossip push below).
 - **Gossip push loop** -- every `EM_FILTER_GOSSIP_INTERVAL_MS` (default
-  5000ms), `POST`s the self-payload to each resolved disco's `/pop/gossip`:
+  5000ms), `POST`s the self-payload to each resolved disco's `/pop/gossip`,
+  authenticated with headers `x-pop-id` = base64(id), `x-pop-ts` = decimal unix
+  millis, `x-pop-sig` = `sign_gossip(id, ts, body)` over the exact body bytes:
 
   ```json
   {
@@ -73,10 +76,10 @@ never needs inbound reachability.
 - **Query** (disco -> filter): `{"action": "query", "id": "<qid>", "body": "<query>"}`.
 - **Result** (filter -> disco):
   ```json
-  {"action": "result", "id": "<qid>", "results": [...],
+  {"action": "result", "id": "<qid>", "results": [...], "ts": <unix ms>,
    "signer_id": "<b64>", "signature": "<b64>"}
   ```
-  The filter signs `canonical_response(results)` itself -- the disco is a dumb
+  The filter signs `canonical_response_v2(query body, ts, results)` itself -- the disco is a dumb
   pipe and cannot forge a result for this id (it never holds the private key).
 - On disconnect (network error, dead socket, rejected hello), the client
   reconnects after `EM_FILTER_RECONNECT_MS` (default 5000ms). Handler memory

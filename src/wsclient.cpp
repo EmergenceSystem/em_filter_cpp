@@ -78,11 +78,14 @@ bool RelayClient::session() {
             }
         }
 
-        auto [signer_id, signature] = identity_.sign_results(results);
+        // v2: sign over the relayed query body + a fresh unix-millis ts.
+        const std::int64_t ts = now_ms();
+        auto [signer_id, signature] = identity_.sign_results_v2(body, ts, results);
         if (!ws.send_text(json{
                 {"action", "result"},
                 {"id", query_id},
                 {"results", results},
+                {"ts", ts},
                 {"signer_id", signer_id},
                 {"signature", signature},
             }.dump())) {

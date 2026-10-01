@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -76,7 +78,72 @@ TEST_CASE("AgentServer: /agent/query returns signed results", "[server]") {
     auto signer_id = em::crypto::b64_decode(body["signer_id"].get<std::string>());
     CHECK(signer_id == rs.identity.id());
     auto sig = em::crypto::b64_decode(body["signature"].get<std::string>());
-    CHECK(em::crypto::verify(em::crypto::canonical_response(body["results"]), sig, rs.identity.pubkey()));
+    REQUIRE(body["ts"].is_number_integer());
+    const std::int64_t ts = body["ts"].get<std::int64_t>();
+    CHECK(ts > 1700000000000LL);
+    CHECK(em::crypto::verify(em::crypto::canonical_response_v2("hi", ts, body["results"]), sig,
+                             rs.identity.pubkey()));
+    // The v1 canonical form must no longer verify.
+    CHECK_FALSE(em::crypto::verify(em::crypto::canonical_response(body["results"]), sig,
+                                   rs.identity.pubkey()));
+    // Bound to the query: a different query does not verify.
+    CHECK_FALSE(em::crypto::verify(em::crypto::canonical_response_v2("other", ts, body["results"]), sig,
+                                   rs.identity.pubkey()));
+}
+
+TEST_CASE("gossip_push_loop: POST carries verifiable x-pop-* auth headers", "[server][gossip]") {
+    // Stub disco: captures the first /pop/gossip POST (headers + exact body).
+    httplib::Server stub;
+    std::mutex m;
+    std::string got_body;
+    httplib::Headers got_headers;
+    std::atomic<bool> got{false};
+    stub.Post("/pop/gossip", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(m);
+        if (!got) {
+            got_body = req.body;
+            got_headers = req.headers;
+            got = true;
+        }
+        res.set_content("{}", "application/json");
+    });
+    int port = stub.bind_to_any_port("127.0.0.1");
+    REQUIRE(port > 0);
+    std::thread stub_thread([&] { stub.listen_after_bind(); });
+    stub.wait_until_ready();
+
+    // gossip_push_loop never returns, so the detached thread must not reference
+    // this test's stack: the identity is intentionally leaked and seeds copied.
+    auto* identp = new em::Identity("gossiper", tmp_key_dir("gossip_auth"), std::vector<std::string>{"search"});
+    em::Identity& ident = *identp;
+    std::vector<em::DiscoNode> seeds{{"127.0.0.1", (uint16_t)port, false}};
+    // Long interval: it pushes once immediately, and the next push (5s later)
+    // never fires within the test process lifetime in practice.
+    std::thread pusher([identp, seeds] {
+        em::internal::gossip_push_loop(*identp, seeds, "1.2.3.4", 9600, 600000);
+    });
+    pusher.detach();
+
+    for (int i = 0; i < 100 && !got; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(got);
+
+    std::lock_guard<std::mutex> lock(m);
+    auto find = [&](const char* k) {
+        auto it = got_headers.find(k);
+        REQUIRE(it != got_headers.end());
+        return it->second;
+    };
+    auto id = em::crypto::b64_decode(find("x-pop-id"));
+    CHECK(id == ident.id());
+    const std::int64_t ts = std::stoll(find("x-pop-ts"));
+    CHECK(ts > 1700000000000LL);
+    auto sig = em::crypto::b64_decode(find("x-pop-sig"));
+    auto digest = em::crypto::sha256(em::crypto::Bytes(got_body.begin(), got_body.end()));
+    CHECK(em::crypto::verify(em::crypto::canonical_gossip_auth(id, ts, digest), sig, ident.pubkey()));
+    CHECK(json::parse(got_body)["role"] == "filter");
+
+    stub.stop();
+    stub_thread.join();
 }
 
 TEST_CASE("AgentServer: /health replies ok", "[server]") {

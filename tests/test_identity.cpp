@@ -70,3 +70,28 @@ TEST_CASE("sign_results reproduces a verifiable response signature", "[identity]
     em::crypto::Bytes sig = em::crypto::b64_decode(sig_b64);
     CHECK(em::crypto::verify(em::crypto::canonical_response(items), sig, ident.pubkey()));
 }
+
+TEST_CASE("sign_results_v2 binds query and ts; gossip_auth_headers verify", "[identity]") {
+    em::Identity ident("signer2", tmp_key_dir("sign_v2"), {"search"});
+    json items = json::array(
+        {{{"url", "https://x/1"}, {"title", "T"}, {"resume", "R"}}});
+
+    const std::int64_t ts = 1700000000123LL;
+    auto [signer_id, sig_b64] = ident.sign_results_v2("hello", ts, items);
+    CHECK(em::crypto::b64_decode(signer_id) == ident.id());
+    em::crypto::Bytes sig = em::crypto::b64_decode(sig_b64);
+    CHECK(em::crypto::verify(em::crypto::canonical_response_v2("hello", ts, items), sig, ident.pubkey()));
+    CHECK_FALSE(em::crypto::verify(em::crypto::canonical_response_v2("other", ts, items), sig, ident.pubkey()));
+    CHECK(em::now_ms() > 1700000000000LL);
+
+    const std::string body = R"({"a":1})";
+    auto hdrs = ident.gossip_auth_headers(body, ts);
+    REQUIRE(hdrs.size() == 3);
+    CHECK(hdrs[0].first == "x-pop-id");
+    CHECK(hdrs[1].first == "x-pop-ts");
+    CHECK(hdrs[1].second == "1700000000123");
+    CHECK(hdrs[2].first == "x-pop-sig");
+    auto gsig = em::crypto::b64_decode(hdrs[2].second);
+    auto digest = em::crypto::sha256(em::crypto::Bytes(body.begin(), body.end()));
+    CHECK(em::crypto::verify(em::crypto::canonical_gossip_auth(ident.id(), ts, digest), gsig, ident.pubkey()));
+}

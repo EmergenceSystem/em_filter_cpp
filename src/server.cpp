@@ -51,9 +51,12 @@ AgentServer::AgentServer(Identity& identity, std::shared_ptr<Filter> filter,
                 return;
             }
 
-            auto [signer_id, signature] = identity_.sign_results(results);
+            // v2: sign over the received query + a fresh unix-millis ts.
+            const std::int64_t ts = now_ms();
+            auto [signer_id, signature] = identity_.sign_results_v2(query, ts, results);
             res.set_content(json{
                 {"results", results},
+                {"ts", ts},
                 {"signer_id", signer_id},
                 {"signature", signature},
             }.dump(), "application/json");
@@ -110,7 +113,11 @@ void gossip_push_loop(Identity& identity,
             cli.set_connection_timeout(3);
             cli.set_read_timeout(3);
             auto payload = identity.gossip_payload(advertise_host, query_port).dump();
-            auto res = cli.Post("/pop/gossip", payload, "application/json");
+            // Auth headers over the exact body bytes (x-pop-id / x-pop-ts / x-pop-sig).
+            httplib::Headers headers;
+            for (auto& [k, v] : identity.gossip_auth_headers(payload, now_ms()))
+                headers.emplace(k, v);
+            auto res = cli.Post("/pop/gossip", headers, payload, "application/json");
             if (!res) {
                 std::cerr << "[em_filter] gossip push to " << seed.host << ":"
                           << seed.port << " failed\n";

@@ -1,6 +1,13 @@
 #include "em_filter/identity.hpp"
 
+#include <chrono>
+
 namespace em {
+
+std::int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 using json = nlohmann::json;
 
@@ -41,6 +48,21 @@ json Identity::gossip_payload(const std::string& host, int query_port) const {
 
 std::pair<std::string, std::string> Identity::sign_results(const json& items) const {
     return crypto::sign_response(items, pubkey_, seed_);
+}
+
+std::pair<std::string, std::string> Identity::sign_results_v2(const std::string& query,
+                                                               std::int64_t ts,
+                                                               const json& items) const {
+    return crypto::sign_response_v2(query, ts, items, pubkey_, seed_);
+}
+
+std::vector<std::pair<std::string, std::string>>
+Identity::gossip_auth_headers(const std::string& body, std::int64_t ts) const {
+    return {
+        {"x-pop-id", crypto::b64_encode(id_)},
+        {"x-pop-ts", std::to_string(ts)},
+        {"x-pop-sig", crypto::sign_gossip(id_, ts, body, seed_)},
+    };
 }
 
 } // namespace em
