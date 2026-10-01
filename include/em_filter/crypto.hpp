@@ -48,6 +48,36 @@ std::pair<std::string, std::string> sign_response(const nlohmann::json& items,
                                                     const Bytes& pubkey,
                                                     const Bytes& seed);
 
+/**
+ * canonical_response_v2 = utf8(query) || 0x00 || ascii(decimal(ts)) || 0x00
+ *                         || canonical_response(items)
+ * ts is a 64-bit unix-millis timestamp rendered in base-10 ASCII. Binds the
+ * signature to the query and time (replay protection).
+ */
+Bytes canonical_response_v2(const std::string& query, std::int64_t ts,
+                             const nlohmann::json& items);
+
+/** Sign canonical_response_v2(query, ts, items); returns (signer_id_b64, signature_b64). */
+std::pair<std::string, std::string> sign_response_v2(const std::string& query, std::int64_t ts,
+                                                       const nlohmann::json& items,
+                                                       const Bytes& pubkey, const Bytes& seed);
+
+/** SHA-256 digest (32 bytes). */
+Bytes sha256(const Bytes& data);
+
+/**
+ * canonical_gossip_auth = id(16) || 0x00 || ascii(decimal(ts)) || 0x00
+ *                         || sha256(body)(32)
+ * `body_sha256` is the already-computed 32-byte digest of the request body.
+ */
+Bytes canonical_gossip_auth(const Bytes& id, std::int64_t ts, const Bytes& body_sha256);
+
+/**
+ * sign_gossip: base64(ed25519(seed, canonical_gossip_auth(id, ts, sha256(body)))).
+ */
+std::string sign_gossip(const Bytes& id, std::int64_t ts, const std::string& body,
+                         const Bytes& seed);
+
 /** Padded standard base64 (matches Erlang base64:encode/1). */
 std::string b64_encode(const Bytes& data);
 Bytes b64_decode(const std::string& s);

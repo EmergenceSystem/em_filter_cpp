@@ -140,6 +140,49 @@ std::pair<std::string, std::string> sign_response(const nlohmann::json& items,
     return {b64_encode(id_of(pubkey)), b64_encode(sig)};
 }
 
+Bytes canonical_response_v2(const std::string& query, std::int64_t ts,
+                             const nlohmann::json& items) {
+    Bytes out(query.begin(), query.end());
+    out.push_back(0);
+    std::string ts_str = std::to_string(ts);
+    out.insert(out.end(), ts_str.begin(), ts_str.end());
+    out.push_back(0);
+    Bytes cr = canonical_response(items);
+    out.insert(out.end(), cr.begin(), cr.end());
+    return out;
+}
+
+std::pair<std::string, std::string> sign_response_v2(const std::string& query, std::int64_t ts,
+                                                       const nlohmann::json& items,
+                                                       const Bytes& pubkey, const Bytes& seed) {
+    Bytes cr = canonical_response_v2(query, ts, items);
+    Bytes sig = sign(cr, seed);
+    return {b64_encode(id_of(pubkey)), b64_encode(sig)};
+}
+
+Bytes sha256(const Bytes& data) {
+    ensure_sodium();
+    Bytes h(crypto_hash_sha256_BYTES);
+    crypto_hash_sha256(h.data(), data.data(), data.size());
+    return h;
+}
+
+Bytes canonical_gossip_auth(const Bytes& id, std::int64_t ts, const Bytes& body_sha256) {
+    Bytes out(id.begin(), id.end());
+    out.push_back(0);
+    std::string ts_str = std::to_string(ts);
+    out.insert(out.end(), ts_str.begin(), ts_str.end());
+    out.push_back(0);
+    out.insert(out.end(), body_sha256.begin(), body_sha256.end());
+    return out;
+}
+
+std::string sign_gossip(const Bytes& id, std::int64_t ts, const std::string& body,
+                         const Bytes& seed) {
+    Bytes digest = sha256(Bytes(body.begin(), body.end()));
+    return b64_encode(sign(canonical_gossip_auth(id, ts, digest), seed));
+}
+
 std::pair<Bytes, Bytes> load_or_create(const std::string& key_dir) {
     ensure_sodium();
     fs::path dir(key_dir);
